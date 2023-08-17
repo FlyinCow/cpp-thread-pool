@@ -69,17 +69,18 @@ class Worker {
 
   void worker_loop() {
     std::function<void()> current_job;
-    while (true) {  // todo: 避免忙等
-      if (jobs.try_pop(current_job)) {
+    while (true) {                      // todo: 避免忙等
+      if (jobs.try_pop(current_job)) {  // still have jobs to do
         current_job();
-      } else {
+      } else if (destructing) {  // ~Worker() is called
         {
           std::lock_guard<std::mutex> lock(m);
-          if (destructing) {
+          if (destructing) {  // double check lock
             job_done_cv.notify_one();
             return;
           }
         }
+      } else {  // no job to to
         std::this_thread::yield();
       }
     }
@@ -105,6 +106,12 @@ class Worker {
     }
   }
 
+  /**
+   * @brief Add a job withou a return value.
+   *
+   * @tparam F Funcion type
+   * @param job Job to add. Should be of type `void()`.
+   */
   template <typename F, typename R = result_of_t<F>,
             typename DR = typename std::enable_if<std::is_void<R>::value>::type>
   void add_job(F &&job) {
@@ -117,6 +124,15 @@ class Worker {
     });
   }
 
+  /**
+   * @brief Add a job with a return value. The value returned will be wrapped in
+   * a `std::future<R>`.
+   *
+   * @tparam F Function type.
+   * @tparam R Return value type.
+   * @param job Job to add. Should be of type `R()`.
+   * @return std::future<R>
+   */
   template <
       typename F, typename R = result_of_t<F>,
       typename DR = typename std::enable_if<!std::is_void<R>::value, R>::type>
@@ -133,6 +149,19 @@ class Worker {
     });
     return ret_future;
   }
+};
+
+class TPool {
+ private:
+  std::vector<Worker> workers;
+  unsigned int worker_count;
+
+ public:
+  TPool(const TPool &) = delete;
+  TPool(TPool &&) = delete;
+  TPool(unsigned int worker_count = 1)
+      : worker_count(worker_count),
+        workers(std::vector<Worker>(worker_count)){};
 };
 
 // class SyncBlock {
