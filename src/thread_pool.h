@@ -4,6 +4,7 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
+#include <map>
 #include <memory>
 #include <fmt/core.h>
 #include <functional>
@@ -106,6 +107,9 @@ class Worker {
     }
   }
 
+  using id = std::thread::id;
+  id get_id() { return t.get_id(); }
+
   /**
    * @brief Add a job withou a return value.
    *
@@ -153,15 +157,24 @@ class Worker {
 
 class TPool {
  private:
-  std::vector<Worker> workers;
   unsigned int worker_count;
+  std::map<Worker::id, std::shared_ptr<Worker>> workers;
+
+  std::shared_ptr<Worker> get_best_worker() {}
 
  public:
   TPool(const TPool &) = delete;
   TPool(TPool &&) = delete;
-  TPool(unsigned int worker_count = 1)
-      : worker_count(worker_count),
-        workers(std::vector<Worker>(worker_count)){};
+
+  explicit TPool(int worker_count = 1) : worker_count(worker_count) {
+    for (int i = 0; i < std::max(worker_count, 1); i++) {
+      auto wp = std::make_shared<Worker>();
+      workers.emplace(wp->get_id(), wp);
+    }
+  }
+
+  template <typename F, typename R = result_of_t<F>>
+  void submit(F &&) {}
 };
 
 // class SyncBlock {
