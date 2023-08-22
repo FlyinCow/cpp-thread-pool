@@ -8,14 +8,7 @@
 #include <memory>
 #include <fmt/core.h>
 #include <functional>
-
-#if __cplusplus >= 201703L
-template <typename F, typename... Args>
-using result_of_t = std::invoke_result_t<F, Args...>;
-#else
-template <typename F, typename... Args>
-using result_of_t = typename std::result_of<F(Args...)>::type;
-#endif
+#include "utils.h"
 
 namespace tpool {
 
@@ -158,23 +151,41 @@ class Worker {
 class TPool {
  private:
   unsigned int worker_count;
-  std::map<Worker::id, std::shared_ptr<Worker>> workers;
+  std::vector<std::shared_ptr<Worker>> workers;
+  std::shared_ptr<Worker> current_worker;
+  size_t current_pos = 0;
 
-  std::shared_ptr<Worker> get_best_worker() {}
+  std::shared_ptr<Worker> get_best_worker() {
+    auto ret = workers[current_pos];
+    current_pos = (current_pos + 1) % worker_count;
+    return ret;
+  }
 
  public:
   TPool(const TPool &) = delete;
   TPool(TPool &&) = delete;
 
   explicit TPool(int worker_count = 1) : worker_count(worker_count) {
-    for (int i = 0; i < std::max(worker_count, 1); i++) {
+    for (int i = 0; i < std::max(worker_count, 1); i++) {  // at least 1 worker
       auto wp = std::make_shared<Worker>();
-      workers.emplace(wp->get_id(), wp);
+      workers.emplace_back(wp);
     }
+    current_worker = workers[0];  // so `current_worker != nullptr`.
   }
 
-  template <typename F, typename R = result_of_t<F>>
-  void submit(F &&) {}
+  template <
+      typename F, typename R = result_of_t<F>,
+      typename DR = typename std::enable_if<std::is_void<R>::value, R>::type>
+  void submit(F &&job) {
+    get_best_worker()->add_job(std::forward<F>(job));
+  }
+
+  template <
+      typename F, typename R = result_of_t<F>,
+      typename DR = typename std::enable_if<!std::is_void<R>::value, R>::type>
+  std::future<R> submit(F &&job) {
+    return get_best_worker()->add_job(std::forward<F>(job));
+  }
 };
 
 // class SyncBlock {
